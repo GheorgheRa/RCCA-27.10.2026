@@ -1,11 +1,20 @@
 import React, { useRef, useState } from 'react';
 import { backend } from '@/api/backendClient';
 import { Button } from '@/components/ui/button';
-import { FileText, FileSpreadsheet, Table, Upload, UserPlus, X } from 'lucide-react';
-import { utils, writeFile } from 'xlsx';
+import { FileText, FileSpreadsheet, Table, Upload, UserPlus, X, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { utils, writeFile, read } from 'xlsx';
 import { jsPDF } from 'jspdf';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const normalizeKey = (obj, keys) => {
+  for (const k of keys) {
+    const clean = k.toLowerCase().replace(/[\s_()-]/g, '');
+    const found = Object.keys(obj).find((ok) => ok.toLowerCase().replace(/[\s_()-]/g, '') === clean);
+    if (found && obj[found]) return obj[found];
+  }
+  return undefined;
+};
 
 export default function UsersFileActions({ title, headers, rows, existingEmails, onInvited }) {
   const fileRef = useRef(null);
@@ -13,6 +22,8 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
   const [status, setStatus] = useState(null);
   const [pending, setPending] = useState(null);
   const [inviting, setInviting] = useState(false);
+  const [defaultPassword, setDefaultPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const fileBase = () => `${title.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}`;
 
@@ -74,20 +85,31 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
     setStatus(null);
     setPending(null);
     try {
-      const { file_uri } = await backend.integrations.Core.UploadPrivateFile({ file });
-      const { signed_url } = await backend.integrations.Core.CreateFileSignedUrl({ file_uri, expires_in: 600 });
-      const res = await backend.functions.invoke('importUsersFile', { file_url: signed_url });
-      const extracted = res.data?.rows || [];
+      let extracted = [];
+      const isSpreadsheet = /\.(csv|tsv|xlsx?)(\?|$)/i.test(file.name) || file.type.includes('csv') || file.type.includes('spreadsheet') || file.type.includes('excel');
+      if (isSpreadsheet) {
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = read(arrayBuffer, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        extracted = utils.sheet_to_json(sheet, { defval: '', raw: false });
+      } else {
+        const { file_url } = await backend.integrations.Core.UploadPublicFile({ file });
+        const res = await backend.functions.invoke('importUsersFile', { file_url });
+        extracted = res.data?.rows || [];
+      }
+
       const existing = new Set((existingEmails || []).map(em => String(em).toLowerCase()));
       const seen = new Set();
       const toInvite = [];
       extracted.forEach((row) => {
-        const email = String(row.email ?? '').trim();
-        const role = String(row.role ?? '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+        const email = String(row.email ?? normalizeKey(row, ['email', 'mail', 'e-mail']) ?? '').trim();
+        const role = String(row.role ?? normalizeKey(row, ['role', 'type']) ?? '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+        const name = String(row.name ?? normalizeKey(row, ['name', 'full_name', 'fullname', 'display_name', 'displayname']) ?? '').trim();
+        const password = String(row.password ?? normalizeKey(row, ['password', 'pwd', 'pass']) ?? '').trim();
         const key = email.toLowerCase();
         if (!EMAIL_RE.test(email) || existing.has(key) || seen.has(key)) return;
         seen.add(key);
-        toInvite.push({ email, role });
+        toInvite.push({ email, role, name, password });
       });
       if (!toInvite.length) {
         setStatus(extracted.length ? 'No new users found in file.' : 'No users found in file.');
@@ -106,15 +128,27 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
     setInviting(true);
     let ok = 0;
     let fail = 0;
+    const useDefault = defaultPassword.trim();
     for (const row of pending) {
-      try { await backend.users.inviteUser(row.email, row.role); ok++; }
+      try {
+        const password = row.password || useDefault;
+        if (password) {
+          await backend.users.createUserWithPassword(row.email, password, row.role, row.name || undefined);
+        } else {
+          await backend.users.inviteUser(row.email, row.role);
+        }
+        ok++;
+      }
       catch { fail++; }
     }
-    setStatus(`Invited ${ok} user(s)${fail ? `, ${fail} failed (already registered?)` : ''}.`);
+    setStatus(`Created ${ok} user(s)${fail ? `, ${fail} failed` : ''}.`);
     setPending(null);
     setInviting(false);
+    setDefaultPassword('');
     onInvited?.();
   };
+
+  const hasPasswordInFile = pending?.some(r => r.password);
 
   return (
     <div className="space-y-2">
@@ -143,16 +177,48 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
         {status && <span className="text-xs text-slate-500">{status}</span>}
       </div>
       {pending && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-          <span className="text-xs text-slate-700">
-            {pending.length} new user(s) ready to invite. Each one receives an invite email.
-          </span>
-          <Button size="sm" className="h-7 px-2 text-xs gap-1" onClick={doInvite} disabled={inviting}>
-            <UserPlus className="w-3.5 h-3.5" /> {inviting ? 'Inviting...' : `Invite ${pending.length}`}
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1" onClick={() => setPending(null)} disabled={inviting}>
-            <X className="w-3.5 h-3.5" /> Cancel
-          </Button>
+        <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-700">
+              {pending.length} new user(s) ready to create.
+            </span>
+          </div>
+          {!hasPasswordInFile && (
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+              <div className="relative flex-1 max-w-xs">
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  value={defaultPassword}
+                  onChange={e => setDefaultPassword(e.target.value)}
+                  placeholder="Default password for all users (min 6 chars)"
+                  className="h-7 text-xs pr-8"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(s => !s)}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="text-xs text-slate-500">
+            {hasPasswordInFile
+              ? 'Each user will be created with the password from the file.'
+              : defaultPassword.trim()
+                ? `All users will be created with the password "${showPassword ? defaultPassword : '••••••'}" and can sign in immediately.`
+                : 'Without a password, users will receive an invite email.'}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" className="h-7 px-2 text-xs gap-1" onClick={doInvite} disabled={inviting}>
+              <UserPlus className="w-3.5 h-3.5" /> {inviting ? 'Creating...' : `Create ${pending.length} user(s)`}
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1" onClick={() => setPending(null)} disabled={inviting}>
+              <X className="w-3.5 h-3.5" /> Cancel
+            </Button>
+          </div>
         </div>
       )}
     </div>

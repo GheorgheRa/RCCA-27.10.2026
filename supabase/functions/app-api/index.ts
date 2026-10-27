@@ -383,6 +383,28 @@ Deno.serve(async (request) => {
         return json({ invited: true, user_id: data.user.id });
       }
 
+      case 'create-user-with-password': {
+        await requireAdmin(user.id);
+        const email = String(body.email || '').trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: 'Invalid email address' }, 400);
+        const password = String(body.password || '');
+        if (password.length < 6) return json({ error: 'Password must be at least 6 characters' }, 400);
+        const role = body.role === 'admin' ? 'admin' : 'user';
+        const name = String(body.name || '').trim();
+        const { data, error } = await service.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: name ? { full_name: name, display_name: name } : { full_name: email },
+        });
+        if (error) throw error;
+        const { error: profileError } = await service.from('profiles')
+          .update({ role, ...(name ? { full_name: name, display_name: name } : {}) })
+          .eq('id', data.user.id);
+        if (profileError) throw profileError;
+        return json({ created: true, user_id: data.user.id });
+      }
+
       case 'delete-account': {
         const userId = String(body.user_id || '');
         if (userId !== user.id) await requireAdmin(user.id);
