@@ -127,22 +127,19 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
 
   const doInvite = async () => {
     setInviting(true);
-    let ok = 0;
-    let fail = 0;
-    const useDefault = defaultPassword.trim();
-    for (const row of pending) {
-      try {
-        const password = row.password || useDefault;
-        if (password) {
-          await backend.users.createUserWithPassword(row.email, password, row.role, row.name || undefined);
-        } else {
-          await backend.users.inviteUser(row.email, row.role);
-        }
-        ok++;
-      }
-      catch { fail++; }
+    try {
+      const useDefault = defaultPassword.trim();
+      const res = await backend.users.bulkCreateUsers(pending, useDefault || undefined);
+      const created = res.data?.created ?? 0;
+      const failed = res.data?.failed ?? 0;
+      const errs = res.data?.errors ?? [];
+      setStatus(
+        `Created ${created} user(s)${failed ? `, ${failed} failed` : ''}.` +
+        (errs.length ? ` Errors: ${errs.slice(0, 3).join('; ')}${errs.length > 3 ? '...' : ''}` : '')
+      );
+    } catch (err) {
+      setStatus(`Import failed: ${err.message}`);
     }
-    setStatus(`Created ${ok} user(s)${fail ? `, ${fail} failed` : ''}.`);
     setPending(null);
     setInviting(false);
     setDefaultPassword('');

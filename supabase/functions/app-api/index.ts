@@ -405,6 +405,71 @@ Deno.serve(async (request) => {
         return json({ created: true, user_id: data.user.id });
       }
 
+      case 'bulk-create-users': {
+        await requireAdmin(user.id);
+        const users = Array.isArray(body.users) ? body.users : [];
+        if (!users.length) return json({ error: 'No users provided' }, 400);
+        const defaultPassword = String(body.default_password || '');
+        const results = { created: 0, failed: 0, errors: [] as string[] };
+        for (const entry of users.slice(0, 200)) {
+          const email = String(entry.email || '').trim().toLowerCase();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            results.failed++;
+            results.errors.push(`${email || '(empty)'}: invalid email`);
+            continue;
+          }
+          const role = entry.role === 'admin' ? 'admin' : 'user';
+          const name = String(entry.name || '').trim();
+          const password = String(entry.password || defaultPassword || '');
+          try {
+            if (password.length >= 6) {
+              const { data, error } = await service.auth.admin.createUser({
+                email,
+                password,
+                email_confirm: true,
+                user_metadata: name ? { full_name: name, display_name: name } : { full_name: email },
+              });
+              if (error) {
+                results.failed++;
+                results.errors.push(`${email}: ${error.message}`);
+                continue;
+              }
+              const { error: profileError } = await service.from('profiles')
+                .update({ role, ...(name ? { full_name: name, display_name: name } : {}) })
+                .eq('id', data.user.id);
+              if (profileError) {
+                results.failed++;
+                results.errors.push(`${email}: profile update failed`);
+                continue;
+              }
+              results.created++;
+            } else {
+              const { data, error } = await service.auth.admin.inviteUserByEmail(email, {
+                data: { full_name: name || email },
+              });
+              if (error) {
+                results.failed++;
+                results.errors.push(`${email}: ${error.message}`);
+                continue;
+              }
+              const { error: profileError } = await service.from('profiles')
+                .update({ role, ...(name ? { full_name: name, display_name: name } : {}) })
+                .eq('id', data.user.id);
+              if (profileError) {
+                results.failed++;
+                results.errors.push(`${email}: profile update failed`);
+                continue;
+              }
+              results.created++;
+            }
+          } catch (err) {
+            results.failed++;
+            results.errors.push(`${email}: ${err instanceof Error ? err.message : 'unknown error'}`);
+          }
+        }
+        return json(results);
+      }
+
       case 'delete-account': {
         const userId = String(body.user_id || '');
         if (userId !== user.id) await requireAdmin(user.id);

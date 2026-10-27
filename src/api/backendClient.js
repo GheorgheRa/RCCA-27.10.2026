@@ -202,6 +202,7 @@ export const backend = {
   users: {
     inviteUser: (email, role) => invoke('invite-user', { email, role }),
     createUserWithPassword: (email, password, role, name) => invoke('create-user-with-password', { email, password, role, name }),
+    bulkCreateUsers: (users, defaultPassword) => invoke('bulk-create-users', { users, default_password: defaultPassword }),
   },
   integrations: {
     Core: {
