@@ -15,7 +15,7 @@ const fmt = (iso) => {
 };
 
 const PRODUCTION_ISSUE_COLUMNS = new Set([
-  'title', 'issue_type', 'defect_description', 'severity', 'status', 'feedback_pending',
+  'issue_number', 'title', 'issue_type', 'defect_description', 'severity', 'status', 'feedback_pending',
   'reported_date', 'machine', 'part_number', 'operation', 'batch_number', 'total_parts',
   'parts_to_analyze', 'parts_nok', 'parts_ok', 'quantity_affected', 'containment_necessary',
   'wip_qty', 'stock_qty', 'transit_qty', 'assigned_to', 'description', 'reported_by',
@@ -26,11 +26,54 @@ const PRODUCTION_ISSUE_COLUMNS = new Set([
   'image_urls', 'downtime_start', 'downtime_end', 'notion_page_id',
 ]);
 
+const FIELD_ALIASES = {
+  issue_number: ['issue_number', 'issuenumber', 'issue#', 'issue_no', 'issueno', 'number', 'aee_number', 'ref'],
+  title: ['title', 'defect', 'defecttype', 'defect_type', 'subject'],
+  issue_type: ['issue_type', 'issuetype', 'type', 'predefined_cause', 'predefinedcause'],
+  defect_description: ['defect_description', 'defectdescription', 'description_defect', 'defect_desc'],
+  reported_date: ['reported_date', 'reporteddate', 'date_reported', 'datereported', 'date'],
+  reported_by: ['reported_by', 'reportedby', 'reporter'],
+  part_number: ['part_number', 'partnumber', 'part_num', 'partnum', 'pn', 'part'],
+  batch_number: ['batch_number', 'batchnumber', 'batch_no', 'batchno', 'batch'],
+  assigned_to: ['assigned_to', 'assignedto', 'assignee', 'owner'],
+  machine: ['machine', 'machine_id', 'machineid', 'equipment'],
+  severity: ['severity', 'priority'],
+  status: ['status', 'state'],
+  root_cause: ['root_cause', 'rootcause', 'root_cause_analysis'],
+  corrective_action: ['corrective_action', 'correctiveaction', 'correctiveactiontext'],
+  corrective_action_owner: ['corrective_action_owner', 'correctiveactionowner', 'ca_owner'],
+  corrective_action_due_date: ['corrective_action_due_date', 'correctiveactionduedate', 'ca_due_date'],
+  corrective_action_completed_date: ['corrective_action_completed_date', 'correctiveactioncompleteddate', 'ca_completed_date'],
+  preventive_action: ['preventive_action', 'preventiveaction'],
+  verification_notes: ['verification_notes', 'verificationnotes', 'verify_notes'],
+  verified_by: ['verified_by', 'verifiedby'],
+  verified_date: ['verified_date', 'verifieddate'],
+  closed_date: ['closed_date', 'closeddate', 'date_closed'],
+  ncr_number: ['ncr_number', 'ncrnumber', 'ncr'],
+  downtime_start: ['downtime_start', 'downtimestart'],
+  downtime_end: ['downtime_end', 'downtimeend'],
+};
+
+const normalizeKey = (key) => key.toLowerCase().replace(/[\s_#()-]/g, '');
+
+const resolveField = (rec, columnName) => {
+  if (rec[columnName] !== undefined && rec[columnName] !== null && rec[columnName] !== '') return rec[columnName];
+  const aliases = FIELD_ALIASES[columnName];
+  if (!aliases) return rec[columnName];
+  for (const alias of aliases) {
+    const cleanAlias = normalizeKey(alias);
+    const found = Object.keys(rec).find((k) => normalizeKey(k) === cleanAlias);
+    if (found && rec[found] !== undefined && rec[found] !== null && rec[found] !== '') return rec[found];
+  }
+  return undefined;
+};
+
 const sanitizeArchiveRecord = (rec) => {
   const { id, created_date, updated_date, created_by, created_by_id, ...rest } = rec;
   const clean = {};
-  for (const [key, value] of Object.entries(rest)) {
-    if (PRODUCTION_ISSUE_COLUMNS.has(key)) clean[key] = value;
+  for (const col of PRODUCTION_ISSUE_COLUMNS) {
+    const value = resolveField(rec, col);
+    if (value !== undefined && value !== null) clean[col] = value;
   }
   return clean;
 };
