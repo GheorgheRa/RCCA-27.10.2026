@@ -411,6 +411,8 @@ Deno.serve(async (request) => {
         if (!users.length) return json({ error: 'No users provided' }, 400);
         const defaultPassword = String(body.default_password || '');
         const results = { created: 0, failed: 0, errors: [] as string[] };
+        const createdUserIds: { id: string; role: string; name: string }[] = [];
+
         for (const entry of users.slice(0, 200)) {
           const email = String(entry.email || '').trim().toLowerCase();
           if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -422,6 +424,7 @@ Deno.serve(async (request) => {
           const name = String(entry.name || '').trim();
           const password = String(entry.password || defaultPassword || '');
           try {
+            let userId: string;
             if (password.length >= 6) {
               const { data, error } = await service.auth.admin.createUser({
                 email,
@@ -434,15 +437,7 @@ Deno.serve(async (request) => {
                 results.errors.push(`${email}: ${error.message}`);
                 continue;
               }
-              const { error: profileError } = await service.from('profiles')
-                .update({ role, ...(name ? { full_name: name, display_name: name } : {}) })
-                .eq('id', data.user.id);
-              if (profileError) {
-                results.failed++;
-                results.errors.push(`${email}: profile update failed`);
-                continue;
-              }
-              results.created++;
+              userId = data.user.id;
             } else {
               const { data, error } = await service.auth.admin.inviteUserByEmail(email, {
                 data: { full_name: name || email },
@@ -452,21 +447,33 @@ Deno.serve(async (request) => {
                 results.errors.push(`${email}: ${error.message}`);
                 continue;
               }
-              const { error: profileError } = await service.from('profiles')
-                .update({ role, ...(name ? { full_name: name, display_name: name } : {}) })
-                .eq('id', data.user.id);
-              if (profileError) {
-                results.failed++;
-                results.errors.push(`${email}: profile update failed`);
-                continue;
-              }
-              results.created++;
+              userId = data.user.id;
             }
+            createdUserIds.push({ id: userId, role, name });
+            results.created++;
           } catch (err) {
             results.failed++;
             results.errors.push(`${email}: ${err instanceof Error ? err.message : 'unknown error'}`);
           }
         }
+
+        // Batch-update profiles: group by role, set name via individual update
+        const adminIds = createdUserIds.filter(u => u.role === 'admin').map(u => u.id);
+        const userIds = createdUserIds.filter(u => u.role !== 'admin').map(u => u.id);
+        if (adminIds.length) {
+          const { error } = await service.from('profiles').update({ role: 'admin' }).in('id', adminIds);
+          if (error) results.errors.push(`Batch admin role update failed: ${error.message}`);
+        }
+        if (userIds.length) {
+          const { error } = await service.from('profiles').update({ role: 'user' }).in('id', userIds);
+          if (error) results.errors.push(`Batch user role update failed: ${error.message}`);
+        }
+        // Update names individually (only where a name was provided)
+        const namedUsers = createdUserIds.filter(u => u.name);
+        for (const u of namedUsers) {
+          await service.from('profiles').update({ full_name: u.name, display_name: u.name }).eq('id', u.id);
+        }
+
         return json(results);
       }
 

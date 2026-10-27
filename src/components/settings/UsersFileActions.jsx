@@ -23,6 +23,7 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
   const [status, setStatus] = useState(null);
   const [pending, setPending] = useState(null);
   const [inviting, setInviting] = useState(false);
+  const [progress, setProgress] = useState(null);
   const [defaultPassword, setDefaultPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
@@ -127,21 +128,31 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
 
   const doInvite = async () => {
     setInviting(true);
+    setProgress({ done: 0, total: pending.length });
     try {
       const useDefault = defaultPassword.trim();
-      const res = await backend.users.bulkCreateUsers(pending, useDefault || undefined);
-      const created = res.data?.created ?? 0;
-      const failed = res.data?.failed ?? 0;
-      const errs = res.data?.errors ?? [];
+      let totalCreated = 0;
+      let totalFailed = 0;
+      const allErrors = [];
+      const CHUNK = 5;
+      for (let i = 0; i < pending.length; i += CHUNK) {
+        const chunk = pending.slice(i, i + CHUNK);
+        const res = await backend.users.bulkCreateUsers(chunk, useDefault || undefined);
+        totalCreated += res.data?.created ?? 0;
+        totalFailed += res.data?.failed ?? 0;
+        allErrors.push(...(res.data?.errors ?? []));
+        setProgress({ done: Math.min(i + CHUNK, pending.length), total: pending.length });
+      }
       setStatus(
-        `Created ${created} user(s)${failed ? `, ${failed} failed` : ''}.` +
-        (errs.length ? ` Errors: ${errs.slice(0, 3).join('; ')}${errs.length > 3 ? '...' : ''}` : '')
+        `Created ${totalCreated} user(s)${totalFailed ? `, ${totalFailed} failed` : ''}.` +
+        (allErrors.length ? ` Errors: ${allErrors.slice(0, 3).join('; ')}${allErrors.length > 3 ? '...' : ''}` : '')
       );
     } catch (err) {
       setStatus(`Import failed: ${err.message}`);
     }
     setPending(null);
     setInviting(false);
+    setProgress(null);
     setDefaultPassword('');
     onInvited?.();
   };
@@ -216,6 +227,11 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
             <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1" onClick={() => setPending(null)} disabled={inviting}>
               <X className="w-3.5 h-3.5" /> Cancel
             </Button>
+            {inviting && progress && (
+              <span className="text-xs text-slate-500">
+                Processing {progress.done}/{progress.total}...
+              </span>
+            )}
           </div>
         </div>
       )}
