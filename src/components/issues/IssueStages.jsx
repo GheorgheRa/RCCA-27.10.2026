@@ -309,7 +309,7 @@ function CorrectiveActionStage({ issue, isLocked, isActive, isCompleted, onUpdat
   // userOptions entries have { value: display_name||full_name||email, email }
   const currentUserDisplayName = userOptions.find(u => u.email === user?.email)?.value || user?.full_name || user?.email;
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'power_admin';
 
   const canEditFeedback = (action) => {
     if (!user) return false;

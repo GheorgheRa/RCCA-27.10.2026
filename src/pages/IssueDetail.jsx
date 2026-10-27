@@ -44,7 +44,7 @@ export default function IssueDetail() {
   useEffect(() => {
     if (issue && issue.feedback_pending) {
       backend.auth.me().then(me => {
-        if (me?.role === 'admin') {
+        if (me?.role === 'admin' || me?.role === 'power_admin') {
           backend.entities.ProductionIssue.update(issue.id, { feedback_pending: false });
           setIssue(prev => ({ ...prev, feedback_pending: false }));
         }

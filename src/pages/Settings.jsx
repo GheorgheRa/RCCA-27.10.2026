@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { backend } from '@/api/backendClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { LogOut, Trash2, Pencil, Check, X, ChevronDown, ChevronUp, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { LogOut, Trash2, Pencil, Check, X, ChevronDown, ChevronUp, KeyRound, Eye, EyeOff, UserPlus, ShieldCheck, Shield, User as UserIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import PicklistManager from '../components/documents/PicklistManager';
-import UsersFileActions from '@/components/settings/UsersFileActions';
 import { useAuth } from '@/lib/AuthContext';
+import { toast } from 'sonner';
 
 const PAGE_PERMISSION_KEYS = [
   { key: 'Dashboard', label: 'Dashboard' },
@@ -20,6 +20,28 @@ const PAGE_PERMISSION_KEYS = [
   { key: 'Settings', label: 'Settings' },
   { key: 'VisualInspection', label: 'Visual Inspection AI' },
 ];
+
+const ROLE_OPTIONS = [
+  { value: 'user', label: 'User', icon: UserIcon, color: 'text-slate-600' },
+  { value: 'admin', label: 'Admin', icon: Shield, color: 'text-blue-600' },
+  { value: 'power_admin', label: 'Power Admin', icon: ShieldCheck, color: 'text-emerald-600' },
+];
+
+function roleBadge(role) {
+  const opt = ROLE_OPTIONS.find(r => r.value === role) || ROLE_OPTIONS[0];
+  const Icon = opt.icon;
+  const colorMap = {
+    power_admin: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    admin: 'bg-blue-50 text-blue-700 border-blue-200',
+    user: 'bg-slate-100 text-slate-600 border-slate-200',
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${colorMap[opt.value]}`}>
+      <Icon className="w-3 h-3" />
+      {opt.label}
+    </span>
+  );
+}
 
 function parsePerms(raw) {
   if (!raw) return null;
@@ -35,6 +57,7 @@ export default function Settings() {
   const [savingId, setSavingId] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [expandedPermsId, setExpandedPermsId] = useState(null);
+  const [changingRoleId, setChangingRoleId] = useState(null);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -42,6 +65,17 @@ export default function Settings() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState(null);
   const [passwordError, setPasswordError] = useState(null);
+
+  // Add user form state
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState('user');
+  const [showNewUserPassword, setShowNewUserPassword] = useState(false);
+  const [addingUser, setAddingUser] = useState(false);
+
+  // Delete user confirm
+  const [deleteUserId, setDeleteUserId] = useState(null);
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
@@ -70,10 +104,18 @@ export default function Settings() {
     }
   };
 
-  const reloadUsers = () => backend.functions.invoke('getUsers', {}).then(res => setUsers(res.data?.full || [])).catch(() => {});
+  const reloadUsers = async () => {
+    try {
+      const list = await backend.users.list();
+      setUsers(list || []);
+    } catch (err) {
+      toast.error('Could not load users: ' + (err.message || 'unknown error'));
+      setUsers([]);
+    }
+  };
 
   useEffect(() => {
-    backend.auth.me().then(u => setCurrentUser(u));
+    backend.auth.me().then(u => setCurrentUser(u)).catch(() => {});
     reloadUsers();
   }, []);
 
@@ -86,7 +128,6 @@ export default function Settings() {
 
   const togglePerm = async (user, pageKey) => {
     const perms = parsePerms(user.page_permissions) || {};
-    // If no perms object yet, all pages are accessible by default — first toggle means restrict everything else
     const allGranted = !user.page_permissions;
     const base = allGranted
       ? Object.fromEntries(PAGE_PERMISSION_KEYS.map(p => [p.key, true]))
@@ -99,15 +140,83 @@ export default function Settings() {
 
   const saveEdit = async (userId) => {
     setSavingId(userId);
-    await backend.entities.User.update(userId, { display_name: editingName });
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, display_name: editingName } : u));
-    setEditingUserId(null);
-    setSavingId(null);
+    try {
+      await backend.entities.User.update(userId, { display_name: editingName });
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, display_name: editingName } : u));
+      setEditingUserId(null);
+    } catch (err) {
+      toast.error('Failed to save name: ' + (err.message || ''));
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleRoleChange = async (user, newRole) => {
+    if (user.id === currentUser?.id) {
+      toast.error('You cannot change your own role.');
+      return;
+    }
+    setChangingRoleId(user.id);
+    try {
+      await backend.users.setRole(user.id, newRole);
+      setUsers(prev => prev.map(u => u.id === user.id ? { ...u, role: newRole } : u));
+      toast.success(`${user.display_name || user.full_name || user.email} is now ${ROLE_OPTIONS.find(r => r.value === newRole)?.label}`);
+    } catch (err) {
+      toast.error(err.message || 'Failed to change role');
+    } finally {
+      setChangingRoleId(null);
+    }
+  };
+
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    if (!newUserEmail.trim() || !newUserPassword.trim()) return;
+    if (newUserPassword.length < 6) {
+      toast.error('Password must be at least 6 characters.');
+      return;
+    }
+    setAddingUser(true);
+    try {
+      await backend.users.create({
+        email: newUserEmail.trim(),
+        password: newUserPassword,
+        name: newUserName.trim(),
+        role: newUserRole,
+      });
+      toast.success(`User ${newUserEmail.trim()} created successfully.`);
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewUserRole('user');
+      await reloadUsers();
+    } catch (err) {
+      toast.error(err.message || 'Failed to create user.');
+    } finally {
+      setAddingUser(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    if (deleteUserId !== userId) {
+      setDeleteUserId(userId);
+      return;
+    }
+    try {
+      await backend.users.remove(userId);
+      toast.success('User deleted.');
+      setDeleteUserId(null);
+      await reloadUsers();
+    } catch (err) {
+      toast.error(err.message || 'Failed to delete user.');
+      setDeleteUserId(null);
+    }
   };
 
   const sortedUsers = [...users].sort((a, b) => {
-    if (a.role === 'admin' && b.role !== 'admin') return -1;
-    if (a.role !== 'admin' && b.role === 'admin') return 1;
+    const roleOrder = { power_admin: 0, admin: 1, user: 2 };
+    const ra = roleOrder[a.role] ?? 3;
+    const rb = roleOrder[b.role] ?? 3;
+    if (ra !== rb) return ra - rb;
     return (a.display_name || a.full_name || '').localeCompare(b.display_name || b.full_name || '');
   });
 
@@ -127,8 +236,11 @@ export default function Settings() {
     backend.auth.logout();
   };
 
+  const isPowerAdmin = currentUser?.role === 'power_admin';
+  const isAdminPlus = currentUser?.role === 'admin' || isPowerAdmin;
+
   return (
-    <div className="p-4 lg:p-6 max-w-lg mx-auto space-y-5">
+    <div className="p-4 lg:p-6 max-w-2xl mx-auto space-y-5">
       <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
 
       <Card>
@@ -202,89 +314,172 @@ export default function Settings() {
           </Button>
           {confirming && (
             <p className="text-xs text-slate-400">
-              This will log you out. Contact your admin to fully remove account data.
+              This will log you out and remove your account.
             </p>
           )}
         </CardContent>
       </Card>
-      {currentUser?.role === 'admin' && (
+
+      {isAdminPlus && (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-semibold text-slate-700">User Management</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <UsersFileActions
-              title="Users"
-              headers={['Name', 'Email', 'Role', 'Pages']}
-              rows={sortedUsers.map(u => [
-                u.display_name || u.full_name || '',
-                u.email || '',
-                u.role || '',
-                pagesFor(u),
-              ])}
-              existingEmails={sortedUsers.map(u => u.email)}
-              onInvited={reloadUsers}
-            />
-            {users.length === 0 && <p className="text-xs text-slate-400">No users found.</p>}
-            {sortedUsers
-              .map(user => (
-              <div key={user.id}>
-              <div className="flex items-center gap-2 py-1.5 border-b border-slate-100 last:border-0">
-                {editingUserId === user.id ? (
-                  <>
-                    <Input
-                      value={editingName}
-                      onChange={e => setEditingName(e.target.value)}
-                      className="h-7 text-sm flex-1"
-                      autoFocus
-                      onKeyDown={e => { if (e.key === 'Enter') saveEdit(user.id); if (e.key === 'Escape') cancelEdit(); }}
-                    />
-                    <button onClick={() => saveEdit(user.id)} disabled={!!savingId} className="text-green-600 hover:text-green-700 p-1">
-                      <Check className="w-4 h-4" />
-                    </button>
-                    <button onClick={cancelEdit} className="text-slate-400 hover:text-slate-600 p-1">
-                      <X className="w-4 h-4" />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-800 truncate">{user.display_name || user.full_name || <span className="text-slate-400 italic">No name</span>}</p>
-                      <p className="text-xs text-slate-400 truncate">{user.email}</p>
-                    </div>
-                    <span className="text-xs text-slate-400 capitalize">{user.role}</span>
-                    <button onClick={() => startEdit(user)} className="text-slate-400 hover:text-blue-600 p-1">
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    {(user.full_name || '').toLowerCase() !== 'rares728' && (
-                      <button onClick={() => setExpandedPermsId(expandedPermsId === user.id ? null : user.id)} className="text-slate-400 hover:text-blue-600 p-1">
-                        {expandedPermsId === user.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      </button>
-                    )}
-                  </>
-                )}
+          <CardContent className="space-y-4">
+            {/* Manual Add User Form */}
+            <form onSubmit={handleAddUser} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center gap-2 text-slate-700">
+                <UserPlus className="w-4 h-4" />
+                <span className="text-sm font-medium">Add New User</span>
               </div>
-              {expandedPermsId === user.id && (user.full_name || '').toLowerCase() !== 'rares728' && (
-                <div className="mt-1 mb-2 ml-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
-                  {PAGE_PERMISSION_KEYS.map(({ key, label }) => {
-                    const perms = parsePerms(user.page_permissions);
-                    const checked = perms ? !!perms[key] : true;
-                    return (
-                      <label key={key} className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 select-none">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => togglePerm(user, key)}
-                          className="accent-blue-600 w-3.5 h-3.5"
-                        />
-                        {label}
-                      </label>
-                    );
-                  })}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input
+                  placeholder="Full name"
+                  value={newUserName}
+                  onChange={e => setNewUserName(e.target.value)}
+                  className="h-9 text-sm"
+                />
+                <Input
+                  type="email"
+                  placeholder="Email address"
+                  value={newUserEmail}
+                  onChange={e => setNewUserEmail(e.target.value)}
+                  className="h-9 text-sm"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="relative">
+                  <Input
+                    type={showNewUserPassword ? 'text' : 'password'}
+                    placeholder="Password (min 6 chars)"
+                    value={newUserPassword}
+                    onChange={e => setNewUserPassword(e.target.value)}
+                    className="h-9 text-sm pr-9"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewUserPassword(s => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showNewUserPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
-              )}
+                <select
+                  value={newUserRole}
+                  onChange={e => setNewUserRole(e.target.value)}
+                  className="h-9 text-sm border border-slate-300 rounded-md px-2 bg-white"
+                  disabled={!isPowerAdmin && newUserRole !== 'user'}
+                >
+                  {ROLE_OPTIONS.map(r => (
+                    <option key={r.value} value={r.value} disabled={r.value !== 'user' && !isPowerAdmin}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ))}
+              <Button type="submit" disabled={addingUser || !newUserEmail.trim() || !newUserPassword.trim()} className="w-full h-9 gap-2">
+                <UserPlus className="w-4 h-4" />
+                {addingUser ? 'Creating...' : 'Create User'}
+              </Button>
+              {!isPowerAdmin && (
+                <p className="text-xs text-slate-400">Admins can create regular users. Only power admins can create admin accounts.</p>
+              )}
+            </form>
+
+            {/* User List */}
+            <div className="space-y-2">
+              {users.length === 0 && <p className="text-xs text-slate-400">No users found.</p>}
+              {sortedUsers.map(user => (
+                <div key={user.id}>
+                  <div className="flex items-center gap-2 py-1.5 border-b border-slate-100 last:border-0">
+                    {editingUserId === user.id ? (
+                      <>
+                        <Input
+                          value={editingName}
+                          onChange={e => setEditingName(e.target.value)}
+                          className="h-7 text-sm flex-1"
+                          autoFocus
+                          onKeyDown={e => { if (e.key === 'Enter') saveEdit(user.id); if (e.key === 'Escape') cancelEdit(); }}
+                        />
+                        <button onClick={() => saveEdit(user.id)} disabled={!!savingId} className="text-green-600 hover:text-green-700 p-1">
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button onClick={cancelEdit} className="text-slate-400 hover:text-slate-600 p-1">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 truncate">
+                            {user.display_name || user.full_name || <span className="text-slate-400 italic">No name</span>}
+                          </p>
+                          <p className="text-xs text-slate-400 truncate">{user.email}</p>
+                        </div>
+                        {/* Role selector */}
+                        {user.id !== currentUser?.id ? (
+                          <select
+                            value={user.role}
+                            onChange={e => handleRoleChange(user, e.target.value)}
+                            disabled={changingRoleId === user.id}
+                            className="text-xs border border-slate-300 rounded px-1.5 py-0.5 bg-white disabled:opacity-50"
+                          >
+                            {ROLE_OPTIONS.map(r => {
+                              const canManage = isPowerAdmin || (user.role === 'user' && r.value === 'user');
+                              return (
+                                <option key={r.value} value={r.value} disabled={!canManage}>
+                                  {r.label}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        ) : (
+                          roleBadge(user.role)
+                        )}
+                        <button onClick={() => startEdit(user)} className="text-slate-400 hover:text-blue-600 p-1">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        {user.id !== currentUser?.id && (
+                          <button onClick={() => setExpandedPermsId(expandedPermsId === user.id ? null : user.id)} className="text-slate-400 hover:text-blue-600 p-1">
+                            {expandedPermsId === user.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        {user.id !== currentUser?.id && (isPowerAdmin || user.role === 'user') && (
+                          <button
+                            onClick={() => handleDeleteUser(user.id)}
+                            className={`p-1 ${deleteUserId === user.id ? 'text-red-600' : 'text-slate-300 hover:text-red-500'}`}
+                            title={deleteUserId === user.id ? 'Click again to confirm' : 'Delete user'}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  {expandedPermsId === user.id && user.id !== currentUser?.id && (
+                    <div className="mt-1 mb-2 ml-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
+                      {PAGE_PERMISSION_KEYS.map(({ key, label }) => {
+                        const perms = parsePerms(user.page_permissions);
+                        const checked = perms ? !!perms[key] : true;
+                        return (
+                          <label key={key} className="flex items-center gap-2 cursor-pointer text-xs text-slate-700 select-none">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => togglePerm(user, key)}
+                              className="accent-blue-600 w-3.5 h-3.5"
+                            />
+                            {label}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}

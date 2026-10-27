@@ -36,7 +36,7 @@ const DEFAULT_ACCESS = ['Dashboard', 'Issues'];
 function hasAccess(user, pageKey) {
   if (!user) return false;
   // Admins and the owner always have full access
-  if (user.role === 'admin' || (user.full_name || '').toLowerCase() === OWNER_USERNAME.toLowerCase()) return true;
+  if (user.role === 'admin' || user.role === 'power_admin' || (user.full_name || '').toLowerCase() === OWNER_USERNAME.toLowerCase()) return true;
   const perms = parsePerms(user.page_permissions);
   // No permissions set yet → only default pages
   if (!perms) return DEFAULT_ACCESS.includes(pageKey);

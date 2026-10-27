@@ -105,7 +105,8 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
       const toInvite = [];
       extracted.forEach((row) => {
         const email = String(row.email ?? normalizeKey(row, ['email', 'mail', 'e-mail']) ?? '').trim();
-        const role = String(row.role ?? normalizeKey(row, ['role', 'type']) ?? '').trim().toLowerCase() === 'admin' ? 'admin' : 'user';
+        const rawRole = String(row.role ?? normalizeKey(row, ['role', 'type']) ?? '').trim().toLowerCase();
+        const role = rawRole === 'power_admin' ? 'power_admin' : rawRole === 'admin' ? 'admin' : 'user';
         const name = String(row.name ?? normalizeKey(row, ['name', 'full_name', 'fullname', 'display_name', 'displayname']) ?? '').trim();
         const password = String(row.password ?? normalizeKey(row, ['password', 'pwd', 'pass']) ?? '').trim();
         const key = email.toLowerCase();
@@ -134,14 +135,22 @@ export default function UsersFileActions({ title, headers, rows, existingEmails,
       let totalCreated = 0;
       let totalFailed = 0;
       const allErrors = [];
-      const CHUNK = 5;
-      for (let i = 0; i < pending.length; i += CHUNK) {
-        const chunk = pending.slice(i, i + CHUNK);
-        const res = await backend.users.bulkCreateUsers(chunk, useDefault || undefined);
-        totalCreated += res.data?.created ?? 0;
-        totalFailed += res.data?.failed ?? 0;
-        allErrors.push(...(res.data?.errors ?? []));
-        setProgress({ done: Math.min(i + CHUNK, pending.length), total: pending.length });
+      for (let i = 0; i < pending.length; i++) {
+        const entry = pending[i];
+        const password = entry.password || useDefault || '';
+        try {
+          await backend.users.create({
+            email: entry.email,
+            password: password.length >= 6 ? password : 'changeme123',
+            name: entry.name,
+            role: entry.role,
+          });
+          totalCreated++;
+        } catch (err) {
+          totalFailed++;
+          allErrors.push(`${entry.email}: ${err.message || 'unknown error'}`);
+        }
+        setProgress({ done: i + 1, total: pending.length });
       }
       setStatus(
         `Created ${totalCreated} user(s)${totalFailed ? `, ${totalFailed} failed` : ''}.` +

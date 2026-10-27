@@ -131,7 +131,7 @@ function createEntity(name) {
     },
     delete: async (id) => {
       assertConfigured();
-      if (isProfile) return invoke('delete-account', { user_id: id });
+      if (isProfile) return backend.users.remove(id);
       return unwrap(await supabase.from(table).delete().eq('id', id).select().maybeSingle());
     },
     subscribe: (callback) => {
@@ -200,9 +200,28 @@ export const backend = {
     invoke,
   },
   users: {
-    inviteUser: (email, role) => invoke('invite-user', { email, role }),
-    createUserWithPassword: (email, password, role, name) => invoke('create-user-with-password', { email, password, role, name }),
-    bulkCreateUsers: (users, defaultPassword) => invoke('bulk-create-users', { users, default_password: defaultPassword }),
+    list: async () => {
+      assertConfigured();
+      return unwrap(await supabase.from('profiles').select('*').order('created_date', { ascending: true }).limit(500));
+    },
+    create: async ({ email, password, name, role }) => {
+      assertConfigured();
+      const { data, error } = await supabase.rpc('admin_create_user', {
+        p_email: email, p_password: password, p_full_name: name || '', p_role: role || 'user',
+      });
+      if (error) throw error;
+      return data;
+    },
+    setRole: async (userId, newRole) => {
+      assertConfigured();
+      const { error } = await supabase.rpc('admin_set_user_role', { p_target_user_id: userId, p_new_role: newRole });
+      if (error) throw error;
+    },
+    remove: async (userId) => {
+      assertConfigured();
+      const { error } = await supabase.rpc('admin_delete_user', { p_target_user_id: userId });
+      if (error) throw error;
+    },
   },
   integrations: {
     Core: {

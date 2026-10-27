@@ -82,11 +82,10 @@ export default function IssueForm({ open, issue, onClose, onSaved, onDeleted, ex
       genNextIssueNumber().then(num => setForm(p => ({ ...p, issue_number: num })));
       backend.auth.me().then(async u => {
         if (!u) return;
-        // Use the backend function to get display_name (works for all roles)
-        backend.functions.invoke('getUsers', {}).then(res => {
-          const users = res.data?.users || [];
-          const match = users.find(usr => usr.email === u.email);
-          const name = match?.value || u.full_name || '';
+        // Resolve display name from profiles table directly
+        backend.users.list().then(profiles => {
+          const match = (profiles || []).find(p => p.email === u.email);
+          const name = match ? (match.display_name || match.full_name || '') : (u.full_name || '');
           if (name) setForm(p => ({ ...p, reported_by: name }));
         }).catch(() => {
           if (u.full_name) setForm(p => ({ ...p, reported_by: u.full_name }));
@@ -104,7 +103,7 @@ export default function IssueForm({ open, issue, onClose, onSaved, onDeleted, ex
     backend.auth.me().then(setCurrentUser);
   }, []);
 
-  const isAdmin = currentUser?.role === 'admin';
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'power_admin';
 
   const handlePartNumberChange = (pn, alias) => {
     setForm(p => ({ ...p, part_number: pn, operation: alias !== undefined ? alias : p.operation }));

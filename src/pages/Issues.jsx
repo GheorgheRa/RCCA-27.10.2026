@@ -138,9 +138,16 @@ export default function Issues() {
       setDefectOptions([{ label: 'All Defects', value: '' }, ...defects]);
     }).catch(() => {});
 
-    backend.functions.invoke('getUsers', {}).then(res => {
-      const users = res.data?.users || [];
-      setOwnerOptions([{ label: 'All Owners', value: '' }, ...users.map(u => ({ value: u.value, label: u.value })).sort((a, b) => a.label.localeCompare(b.label))]);
+    backend.users.list().then(profiles => {
+      const users = (profiles || [])
+        .map(p => ({
+          value: p.display_name || p.full_name || p.email || '',
+          label: p.display_name || p.full_name || p.email || '',
+          email: p.email,
+        }))
+        .filter(u => u.value)
+        .sort((a, b) => a.label.localeCompare(b.label));
+      setOwnerOptions([{ label: 'All Owners', value: '' }, ...users]);
     }).catch(() => {});
   }, []);
 
