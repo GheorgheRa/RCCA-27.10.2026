@@ -6,6 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Archive, Upload, FileDown, Trash2, RotateCcw, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import EuDateInput from '@/components/ui/EuDateInput';
 import ArchiveKpiExport from '@/components/archive/ArchiveKpiExport';
+import { fetchPartNumberAlias } from '@/components/issues/picklists';
+import { genNextIssueNumber } from '@/components/issues/issueNumberGen';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 
 const fmt = (iso) => {
@@ -73,7 +75,7 @@ const NOT_NULL_DEFAULTS = {
   issue_type: 'Other',
 };
 
-const sanitizeArchiveRecord = (rec) => {
+const sanitizeArchiveRecord = (rec, aliasMap, issueNumber) => {
   const { id, created_date, updated_date, created_by, created_by_id, ...rest } = rec;
   const clean = {};
   for (const col of PRODUCTION_ISSUE_COLUMNS) {
@@ -81,6 +83,12 @@ const sanitizeArchiveRecord = (rec) => {
     if (value !== undefined && value !== null && value !== '') clean[col] = value;
     else if (NOT_NULL_DEFAULTS[col]) clean[col] = NOT_NULL_DEFAULTS[col];
   }
+  // Auto-fill the Alias (stored in `operation`) from the Part Number vs Alias picklist
+  if ((!clean.operation || clean.operation === 'undefined') && clean.part_number && aliasMap[clean.part_number]) {
+    clean.operation = aliasMap[clean.part_number];
+  }
+  // Ensure every restored issue gets a valid AEE-#### number
+  if (!clean.issue_number && issueNumber) clean.issue_number = issueNumber;
   return clean;
 };
 
@@ -233,9 +241,20 @@ export default function ArchivePage() {
       const text = await file.text();
       const records = JSON.parse(text);
       if (!Array.isArray(records)) throw new Error('Invalid archive file format.');
+      // Build alias lookup from the Part Number vs Alias picklist
+      const aliases = await fetchPartNumberAlias().catch(() => []);
+      const aliasMap = {};
+      for (const a of aliases) { if (a.partNumber && a.alias && a.alias !== 'undefined') aliasMap[a.partNumber] = a.alias; }
+      // Determine the next AEE-#### number so every restored issue gets one
+      let nextNum = await genNextIssueNumber();
+      const padNum = (n) => `AEE-${String(n).padStart(4, '0')}`;
+      const parseNum = (s) => { const m = (s || '').match(/^AEE-(\d{4})$/i); return m ? parseInt(m[1], 10) : 0; };
+      let maxExisting = parseNum(nextNum);
       let restored = 0;
       for (const rec of records) {
-        await backend.entities.ProductionIssue.create(sanitizeArchiveRecord(rec));
+        const num = padNum(maxExisting);
+        maxExisting = Math.min(maxExisting + 1, 9999);
+        await backend.entities.ProductionIssue.create(sanitizeArchiveRecord(rec, aliasMap, num));
         restored++;
       }
       setRestoreMsg({ type: 'ok', text: `Restored ${restored} issues from file.` });
@@ -255,9 +274,18 @@ export default function ArchivePage() {
     setRestoreMsg(null);
     try {
       const records = JSON.parse(await getArchiveContent(archive));
+      const aliases = await fetchPartNumberAlias().catch(() => []);
+      const aliasMap = {};
+      for (const a of aliases) { if (a.partNumber && a.alias && a.alias !== 'undefined') aliasMap[a.partNumber] = a.alias; }
+      let nextNum = await genNextIssueNumber();
+      const padNum = (n) => `AEE-${String(n).padStart(4, '0')}`;
+      const parseNum = (s) => { const m = (s || '').match(/^AEE-(\d{4})$/i); return m ? parseInt(m[1], 10) : 0; };
+      let maxExisting = parseNum(nextNum);
       let restored = 0;
       for (const rec of records) {
-        await backend.entities.ProductionIssue.create(sanitizeArchiveRecord(rec));
+        const num = padNum(maxExisting);
+        maxExisting = Math.min(maxExisting + 1, 9999);
+        await backend.entities.ProductionIssue.create(sanitizeArchiveRecord(rec, aliasMap, num));
         restored++;
       }
       setRestoreMsg({ type: 'ok', text: `Restored ${restored} issues from "${archive.archive_name}".` });
