@@ -323,7 +323,7 @@ async function sendStandupReminders() {
 }
 
 Deno.serve(async (request) => {
-  if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders, 'Access-Control-Max-Age': '86400' });
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   try {
