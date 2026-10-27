@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { backend } from '@/api/backendClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { LogOut, Trash2, Pencil, Check, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { LogOut, Trash2, Pencil, Check, X, ChevronDown, ChevronUp, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import PicklistManager from '../components/documents/PicklistManager';
 import UsersFileActions from '@/components/settings/UsersFileActions';
+import { useAuth } from '@/lib/AuthContext';
 
 const PAGE_PERMISSION_KEYS = [
   { key: 'Dashboard', label: 'Dashboard' },
@@ -25,6 +27,7 @@ function parsePerms(raw) {
 }
 
 export default function Settings() {
+  const { updatePassword } = useAuth();
   const [confirming, setConfirming] = useState(false);
   const [users, setUsers] = useState([]);
   const [editingUserId, setEditingUserId] = useState(null);
@@ -32,6 +35,40 @@ export default function Settings() {
   const [savingId, setSavingId] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [expandedPermsId, setExpandedPermsId] = useState(null);
+
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState(null);
+  const [passwordError, setPasswordError] = useState(null);
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordMessage(null);
+
+    if (newPassword.length < 6) {
+      setPasswordError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
+
+    setPasswordLoading(true);
+    try {
+      await updatePassword(newPassword);
+      setPasswordMessage('Password updated successfully.');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      setPasswordError(err.message || 'Failed to update password.');
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
 
   const reloadUsers = () => backend.functions.invoke('getUsers', {}).then(res => setUsers(res.data?.full || [])).catch(() => {});
 
@@ -107,6 +144,53 @@ export default function Settings() {
             <LogOut className="w-4 h-4" />
             Log Out
           </Button>
+
+          <div className="pt-2 border-t border-slate-100">
+            <form onSubmit={handleChangePassword} className="space-y-3">
+              <div className="flex items-center gap-2 text-slate-700">
+                <KeyRound className="w-4 h-4" />
+                <span className="text-sm font-medium">Change Password</span>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-password" className="text-xs text-slate-500">New password</Label>
+                <div className="relative">
+                  <Input
+                    id="new-password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                    placeholder="Enter new password"
+                    className="h-9 pr-10"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(s => !s)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="confirm-password" className="text-xs text-slate-500">Confirm new password</Label>
+                <Input
+                  id="confirm-password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter new password"
+                  className="h-9"
+                  autoComplete="new-password"
+                />
+              </div>
+              {passwordError && <p className="text-xs text-red-600">{passwordError}</p>}
+              {passwordMessage && <p className="text-xs text-green-600">{passwordMessage}</p>}
+              <Button type="submit" disabled={passwordLoading || !newPassword || !confirmPassword} className="w-full h-9">
+                {passwordLoading ? 'Updating...' : 'Update Password'}
+              </Button>
+            </form>
+          </div>
 
           <Button
             variant="outline"
