@@ -145,7 +145,7 @@ export default function Issues() {
   }, []);
 
   const { data: issuesData = {}, isLoading } = useQuery({
-    queryKey: ['issues', issueNumberFilter, statusFilter, ownerFilter, partNumberFilter, aliasFilter, defectFilter, batchFilter, page, Object.keys(partAliases).length],
+    queryKey: ['issues', issueNumberFilter, statusFilter, ownerFilter, partNumberFilter, aliasFilter, defectFilter, batchFilter, page, Object.keys(partAliases).length, sortField, sortDir],
     queryFn: async () => {
       // Fetch all issues client-side and filter (API only supports simple equality)
       const allIssues = await backend.entities.ProductionIssue.list('-created_date', 50000);
