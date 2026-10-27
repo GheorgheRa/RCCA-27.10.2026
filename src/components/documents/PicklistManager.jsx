@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Trash2, GripVertical, ToggleLeft, ToggleRight } from 'lucide-react';
 import PicklistFileActions from './PicklistFileActions';
+import { invalidatePicklistCache } from '@/components/issues/picklists';
 
 const CATEGORIES = [
   { value: 'document_type', label: 'Document Type' },
@@ -46,6 +47,7 @@ export default function PicklistManager() {
 
   const loadOptions = () => {
     setLoading(true);
+    invalidatePicklistCache();
     backend.entities.PicklistOption.list('-sort_order', 500).then(data => {
       setOptions(data);
       setLoading(false);
@@ -80,6 +82,7 @@ export default function PicklistManager() {
         payload.client = newClient.trim() || null;
       }
       const created = await backend.entities.PicklistOption.create(payload);
+      invalidatePicklistCache(selectedCategory);
       setOptions(prev => [...prev, created]);
       setNewPartNumber('');
       setNewLabel('');
@@ -95,6 +98,7 @@ export default function PicklistManager() {
         sort_order: maxOrder + 1,
         is_active: true,
       });
+      invalidatePicklistCache(selectedCategory);
       setOptions(prev => [...prev, created]);
       setNewLabel('');
     }
@@ -102,16 +106,19 @@ export default function PicklistManager() {
 
   const toggleActive = async (opt) => {
     const updated = await backend.entities.PicklistOption.update(opt.id, { is_active: !opt.is_active });
+    invalidatePicklistCache(selectedCategory);
     setOptions(prev => prev.map(o => o.id === opt.id ? updated : o));
   };
 
   const deleteOption = async (opt) => {
     await backend.entities.PicklistOption.delete(opt.id);
+    invalidatePicklistCache(selectedCategory);
     setOptions(prev => prev.filter(o => o.id !== opt.id));
   };
 
   const saveClient = async (opt) => {
     const updated = await backend.entities.PicklistOption.update(opt.id, { client: editingClientValue || null });
+    invalidatePicklistCache(selectedCategory);
     setOptions(prev => prev.map(o => o.id === opt.id ? updated : o));
     setEditingClientId(null);
     setEditingClientValue('');

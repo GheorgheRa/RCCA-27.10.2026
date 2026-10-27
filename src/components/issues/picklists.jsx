@@ -16,6 +16,11 @@ async function fetchPicklist(category) {
   return result;
 }
 
+export function invalidatePicklistCache(category) {
+  if (category) cache.delete(category);
+  else cache.clear();
+}
+
 export const fetchIssueTypes = () => fetchPicklist('IssueType_Picklist');
 export const fetchProcessSteps = () => fetchPicklist('ProcessStep_Picklist');
 export const fetchAssignDpt = () => fetchPicklist('department');
