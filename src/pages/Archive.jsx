@@ -68,12 +68,18 @@ const resolveField = (rec, columnName) => {
   return undefined;
 };
 
+const NOT_NULL_DEFAULTS = {
+  title: 'Restored from archive',
+  issue_type: 'Other',
+};
+
 const sanitizeArchiveRecord = (rec) => {
   const { id, created_date, updated_date, created_by, created_by_id, ...rest } = rec;
   const clean = {};
   for (const col of PRODUCTION_ISSUE_COLUMNS) {
     const value = resolveField(rec, col);
-    if (value !== undefined && value !== null) clean[col] = value;
+    if (value !== undefined && value !== null && value !== '') clean[col] = value;
+    else if (NOT_NULL_DEFAULTS[col]) clean[col] = NOT_NULL_DEFAULTS[col];
   }
   return clean;
 };
