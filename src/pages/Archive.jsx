@@ -14,6 +14,27 @@ const fmt = (iso) => {
   return `${d}/${m}/${y}`;
 };
 
+const PRODUCTION_ISSUE_COLUMNS = new Set([
+  'title', 'issue_type', 'defect_description', 'severity', 'status', 'feedback_pending',
+  'reported_date', 'machine', 'part_number', 'operation', 'batch_number', 'total_parts',
+  'parts_to_analyze', 'parts_nok', 'parts_ok', 'quantity_affected', 'containment_necessary',
+  'wip_qty', 'stock_qty', 'transit_qty', 'assigned_to', 'description', 'reported_by',
+  'root_cause_category', 'why_1', 'why_2', 'why_3', 'why_4', 'why_5', 'root_cause',
+  'corrective_action', 'corrective_action_owner', 'corrective_action_due_date',
+  'corrective_action_completed_date', 'corrective_actions_json', 'preventive_action',
+  'verification_notes', 'verified_by', 'verified_date', 'ncr_number', 'closed_date',
+  'image_urls', 'downtime_start', 'downtime_end', 'notion_page_id',
+]);
+
+const sanitizeArchiveRecord = (rec) => {
+  const { id, created_date, updated_date, created_by, created_by_id, ...rest } = rec;
+  const clean = {};
+  for (const [key, value] of Object.entries(rest)) {
+    if (PRODUCTION_ISSUE_COLUMNS.has(key)) clean[key] = value;
+  }
+  return clean;
+};
+
 export default function ArchivePage() {
   const [archives, setArchives] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -165,8 +186,7 @@ export default function ArchivePage() {
       if (!Array.isArray(records)) throw new Error('Invalid archive file format.');
       let restored = 0;
       for (const rec of records) {
-        const { id, created_date, updated_date, ...data } = rec;
-        await backend.entities.ProductionIssue.create(data);
+        await backend.entities.ProductionIssue.create(sanitizeArchiveRecord(rec));
         restored++;
       }
       setRestoreMsg({ type: 'ok', text: `Restored ${restored} issues from file.` });
@@ -188,8 +208,7 @@ export default function ArchivePage() {
       const records = JSON.parse(await getArchiveContent(archive));
       let restored = 0;
       for (const rec of records) {
-        const { id, created_date, updated_date, ...data } = rec;
-        await backend.entities.ProductionIssue.create(data);
+        await backend.entities.ProductionIssue.create(sanitizeArchiveRecord(rec));
         restored++;
       }
       setRestoreMsg({ type: 'ok', text: `Restored ${restored} issues from "${archive.archive_name}".` });
