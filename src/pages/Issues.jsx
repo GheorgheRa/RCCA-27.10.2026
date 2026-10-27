@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { backend } from '@/api/backendClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import IssueForm from '@/components/issues/IssueForm';
@@ -35,6 +35,27 @@ function saveFilters(obj) {
   try { sessionStorage.setItem(FILTERS_KEY, JSON.stringify(obj)); } catch {}
 }
 
+function SortHeader({ label, field, sortField, sortDir, onToggle, className = '' }) {
+  const active = sortField === field;
+  return (
+    <th
+      onClick={() => onToggle(field)}
+      className={`text-left px-4 py-3 font-semibold text-slate-900 dark:text-white cursor-pointer select-none whitespace-nowrap hover:text-blue-600 dark:hover:text-blue-400 transition-colors ${className}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active ? (
+          sortDir === 'asc'
+            ? <ArrowUp className="w-3 h-3" />
+            : <ArrowDown className="w-3 h-3" />
+        ) : (
+          <ArrowUpDown className="w-3 h-3 text-slate-300 dark:text-slate-600" />
+        )}
+      </span>
+    </th>
+  );
+}
+
 export default function Issues() {
   const saved = loadFilters();
   const [issueNumberFilter, setIssueNumberFilter] = useState(saved.issueNumberFilter ?? '');
@@ -46,6 +67,8 @@ export default function Issues() {
   const [batchFilter, setBatchFilter] = useState(saved.batchFilter ?? '');
 
   const [page, setPage] = useState(saved.page ?? 1);
+  const [sortField, setSortField] = useState(saved.sortField ?? 'reported_date');
+  const [sortDir, setSortDir] = useState(saved.sortDir ?? 'desc');
   const [showForm, setShowForm] = useState(false);
   const [editingIssue, setEditingIssue] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -58,8 +81,37 @@ export default function Issues() {
 
   // Persist filters across remounts (same tab session)
   useEffect(() => {
-    saveFilters({ issueNumberFilter, statusFilter, ownerFilter, partNumberFilter, aliasFilter, defectFilter, batchFilter, page });
-  }, [issueNumberFilter, statusFilter, ownerFilter, partNumberFilter, aliasFilter, defectFilter, batchFilter, page]);
+    saveFilters({ issueNumberFilter, statusFilter, ownerFilter, partNumberFilter, aliasFilter, defectFilter, batchFilter, page, sortField, sortDir });
+  }, [issueNumberFilter, statusFilter, ownerFilter, partNumberFilter, aliasFilter, defectFilter, batchFilter, page, sortField, sortDir]);
+
+  const toggleSort = (field) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  };
+
+  const sortIssues = (arr) => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...arr].sort((a, b) => {
+      let av, bv;
+      if (sortField === 'alias') {
+        av = (a.part_number && partAliases[a.part_number]) || '';
+        bv = (b.part_number && partAliases[b.part_number]) || '';
+      } else if (sortField === 'parts_nok') {
+        av = a.parts_nok ?? 0;
+        bv = b.parts_nok ?? 0;
+      } else {
+        av = (a[sortField] ?? '').toString().toLowerCase();
+        bv = (b[sortField] ?? '').toString().toLowerCase();
+      }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+  };
 
   useEffect(() => {
     fetchPartNumberAlias().then(aliases => {
@@ -117,9 +169,10 @@ export default function Issues() {
         return true;
       });
 
-      const total = filtered.length;
+      const sorted = sortIssues(filtered);
+      const total = sorted.length;
       const offset = (page - 1) * ITEMS_PER_PAGE;
-      const issues = filtered.slice(offset, offset + ITEMS_PER_PAGE);
+      const issues = sorted.slice(offset, offset + ITEMS_PER_PAGE);
       return { issues, total };
     }
   });
@@ -222,14 +275,14 @@ export default function Issues() {
             <table className="w-full border-collapse text-sm">
               <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0">
                 <tr className="border-b border-slate-200 dark:border-slate-700">
-                  <th className="text-left px-4 py-3 font-semibold text-slate-900 dark:text-white">Issue #</th>
-                  <th className="text-left px-4 py-3 font-semibold text-slate-900 dark:text-white hidden lg:table-cell">Part Number</th>
-                  <th className="text-left px-4 py-3 font-semibold text-slate-900 dark:text-white hidden lg:table-cell">Alias</th>
-                  <th className="text-left px-4 py-3 font-semibold text-slate-900 dark:text-white hidden lg:table-cell">Batch</th>
-                  <th className="text-left px-4 py-3 font-semibold text-slate-900 dark:text-white">Defect</th>
-                  <th className="text-center px-4 py-3 font-semibold text-slate-900 dark:text-white hidden lg:table-cell">NOK</th>
-                  <th className="text-left px-4 py-3 font-semibold text-slate-900 dark:text-white hidden md:table-cell">Status</th>
-                  <th className="text-left px-4 py-3 font-semibold text-slate-900 dark:text-white hidden lg:table-cell">Date</th>
+                  <SortHeader label="Issue #" field="issue_number" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortHeader label="Part Number" field="part_number" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} className="hidden lg:table-cell" />
+                  <SortHeader label="Alias" field="alias" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} className="hidden lg:table-cell" />
+                  <SortHeader label="Batch" field="batch_number" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} className="hidden lg:table-cell" />
+                  <SortHeader label="Defect" field="title" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} />
+                  <SortHeader label="NOK" field="parts_nok" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} className="hidden lg:table-cell text-center" />
+                  <SortHeader label="Status" field="status" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} className="hidden md:table-cell" />
+                  <SortHeader label="Date" field="reported_date" sortField={sortField} sortDir={sortDir} onToggle={toggleSort} className="hidden lg:table-cell" />
                 </tr>
               </thead>
               <tbody>
