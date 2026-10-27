@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { FileText, FileSpreadsheet, Table, Upload, UserPlus, X, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { utils, writeFile, read } from 'xlsx';
 import { jsPDF } from 'jspdf';
+import { Input } from '@/components/ui/input';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
