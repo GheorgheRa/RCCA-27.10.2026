@@ -1,2 +1,3 @@
 [functions.app-api]
 verify_jwt = false
+
