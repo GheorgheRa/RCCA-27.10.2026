@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import * as XLSX from 'npm:xlsx@0.18.5';
+import { pdf } from 'npm:pdfjs-dist@4.7.76/build/pdf.mjs';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -126,6 +127,81 @@ async function sendMail(payload: Record<string, unknown>, cron = false) {
   return await response.json();
 }
 
+async function extractPdfRows(fileUrl: string): Promise<Record<string, unknown>[]> {
+  const fileResponse = await fetch(fileUrl);
+  if (!fileResponse.ok) {
+    throw new Response(`Uploaded file could not be read (${fileResponse.status}).`, { status: 422 });
+  }
+  const buffer = await fileResponse.arrayBuffer();
+  const doc = await pdf({ data: buffer }, { useWorker: false, isEvalSupported: false });
+  const rows: Record<string, unknown>[] = [];
+  const numPages = doc.numPages;
+  for (let i = 1; i <= numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const items = content.items as Array<{ str: string; transform: number[]; width: number }>;
+    const lines = new Map<number, Array<{ x: number; str: string }>>();
+    for (const item of items) {
+      if (!item.str) continue;
+      const y = Math.round(item.transform[5]);
+      const x = item.transform[4];
+      if (!lines.has(y)) lines.set(y, []);
+      lines.get(y)!.push({ x, str: item.str });
+    }
+    const sortedY = [...lines.keys()].sort((a, b) => b - a);
+    for (const y of sortedY) {
+      const parts = lines.get(y)!.sort((a, b) => a.x - b.x);
+      const text = parts.map((p) => p.str).join(' ').replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      const cells = text.split(/\s{2,}|\t/).map((c) => c.trim()).filter(Boolean);
+      if (cells.length >= 2) {
+        rows.push(Object.fromEntries(cells.map((c, idx) => [`col${idx}`, c])));
+      }
+    }
+  }
+  await doc.destroy();
+  return rows.slice(0, 500);
+}
+
+function normalizePicklistRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const aliases: Record<string, string[]> = {
+    value: ['value', 'part_number', 'partnumber', 'part number', 'pn', 'part_num', 'part', 'utilaj', 'serial', 'serial#', 'serial_number'],
+    label: ['label', 'alias', 'alias (optional)', 'description', 'name', 'secondary', 'alias(optional)'],
+    client: ['client', 'customer', 'client_code', 'clientcode'],
+    active: ['active', 'is_active', 'enabled'],
+  };
+  const findKey = (row: Record<string, unknown>, targets: string[]): string | undefined => {
+    const lowerKeys = Object.keys(row).map((k) => ({ k, lower: k.toLowerCase().replace(/[\s_()-]/g, '') }));
+    for (const target of targets) {
+      const cleanTarget = target.toLowerCase().replace(/[\s_()-]/g, '');
+      const match = lowerKeys.find(({ lower }) => lower === cleanTarget);
+      if (match) return match.k;
+    }
+    for (const target of targets) {
+      const cleanTarget = target.toLowerCase().replace(/[\s_()-]/g, '');
+      const match = lowerKeys.find(({ lower }) => lower.includes(cleanTarget) || cleanTarget.includes(lower));
+      if (match) return match.k;
+    }
+    return undefined;
+  };
+  return rows.map((row) => {
+    const normalized: Record<string, unknown> = {};
+    for (const [target, candidates] of Object.entries(aliases)) {
+      const sourceKey = findKey(row, candidates);
+      if (sourceKey !== undefined) normalized[target] = row[sourceKey];
+    }
+    if (normalized.value === undefined && normalized.label !== undefined) {
+      normalized.value = normalized.label;
+    }
+    if (normalized.label === undefined && normalized.value !== undefined) {
+      const firstExtra = Object.entries(row).find(([k]) => !findKey(row, aliases.value) || k !== findKey(row, aliases.value));
+      if (firstExtra) normalized.label = firstExtra[1];
+    }
+    Object.assign(normalized, row);
+    return normalized;
+  });
+}
+
 async function extractRows(fileUrl: string, schema: Record<string, unknown>) {
   const fileResponse = await fetch(fileUrl);
   if (!fileResponse.ok) {
@@ -146,6 +222,9 @@ async function extractRows(fileUrl: string, schema: Record<string, unknown>) {
     const text = await fileResponse.text();
     return text.split(/\r?\n/).map((value) => value.trim()).filter(Boolean).slice(0, 500)
       .map((value) => ({ label: value, value }));
+  }
+  if (extension === 'pdf' || fileType.includes('application/pdf')) {
+    return await extractPdfRows(fileUrl);
   }
 
   const rowSchema = schema.type === 'array' ? schema.items : schema;
@@ -386,7 +465,7 @@ Deno.serve(async (request) => {
                   role: String(row.role || '').toLowerCase() === 'admin' ? 'admin' : 'user',
                   name: String(row.name || '').trim(),
                 }))
-            : rows.filter((row) => row && typeof row === 'object').slice(0, 500),
+            : normalizePicklistRows(rows.filter((row) => row && typeof row === 'object').slice(0, 500)),
         });
       }
 

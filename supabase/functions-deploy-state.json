@@ -3,11 +3,7 @@
   "functions": {
     "app-api": {
       "hasChanged": false,
-      "hash": "4fb557acbab464d7bc9ec82f3f70f3b3a4d0e733731661df29aa12e0a3532c29"
-    },
-    "create-user": {
-      "hasChanged": false,
-      "hash": "879303665c9961399651f2c668d9867eab2260286ef271204e72e949f6c25382"
+      "hash": "d0552302ac906f03ff5fad811395409301bfddcc541d626baf8b10ba8476581e"
     }
   }
 }

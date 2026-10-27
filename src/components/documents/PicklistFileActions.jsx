@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import { backend } from '@/api/backendClient';
 import { Button } from '@/components/ui/button';
 import { FileText, FileSpreadsheet, Table, Upload } from 'lucide-react';
-import { utils, writeFile } from 'xlsx';
+import { utils, writeFile, read } from 'xlsx';
 import { jsPDF } from 'jspdf';
 
 const slug = (s) => s.toLowerCase().replace(/\s+/g, '_');
@@ -71,15 +71,34 @@ export default function PicklistFileActions({ category, headers, rows, isTwoFiel
     setBusy(true);
     setStatus(null);
     try {
-      const { file_url } = await backend.integrations.Core.UploadPublicFile({ file });
-      const res = await backend.functions.invoke('importPicklistFile', { file_url });
-      const extracted = res.data?.rows || [];
+      let extracted = [];
+      const isSpreadsheet = /\.(csv|tsv|xlsx?)(\?|$)/i.test(file.name) || file.type.includes('csv') || file.type.includes('spreadsheet') || file.type.includes('excel');
+      if (isSpreadsheet) {
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = read(arrayBuffer, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        extracted = utils.sheet_to_json(sheet, { defval: '', raw: false });
+      } else {
+        const { file_url } = await backend.integrations.Core.UploadPublicFile({ file });
+        const res = await backend.functions.invoke('importPicklistFile', { file_url });
+        extracted = res.data?.rows || [];
+      }
+
+      const normalizeKey = (obj, keys) => {
+        for (const k of keys) {
+          const clean = k.toLowerCase().replace(/[\s_()-]/g, '');
+          const found = Object.keys(obj).find((ok) => ok.toLowerCase().replace(/[\s_()-]/g, '') === clean);
+          if (found && obj[found]) return obj[found];
+        }
+        return undefined;
+      };
+
       const existing = new Set(existingValues);
       const toCreate = [];
       extracted.forEach((row) => {
-        const label = String(row.label ?? '').trim() || String(row.value ?? '').trim();
+        const label = String(row.label ?? '').trim() || String(normalizeKey(row, ['alias', 'description', 'name', 'secondary'])).trim() || String(row.value ?? '').trim();
         const value = isTwoField
-          ? String(row.value ?? '').trim()
+          ? String(row.value ?? '').trim() || String(normalizeKey(row, ['part_number', 'partnumber', 'pn', 'part_num', 'part', 'utilaj', 'serial', 'serial#'])).trim()
           : (String(row.value ?? '').trim() || slug(label));
         if (!value || existing.has(value)) return;
         const payload = {
@@ -90,14 +109,16 @@ export default function PicklistFileActions({ category, headers, rows, isTwoFiel
           is_active: row.active !== false,
         };
         if (isThreeField) {
-          const clientVal = String(row.client ?? '').trim().toUpperCase();
+          const clientVal = String(row.client ?? '').trim().toUpperCase() || String(normalizeKey(row, ['customer', 'client_code'])).trim().toUpperCase();
           payload.client = (allowedClients || []).includes(clientVal) ? clientVal : null;
         }
         existing.add(value);
         toCreate.push(payload);
       });
       if (toCreate.length) await backend.entities.PicklistOption.bulkCreate(toCreate);
-      setStatus(`Imported ${toCreate.length} of ${extracted.length} rows.`);
+      setStatus(toCreate.length
+        ? `Imported ${toCreate.length} of ${extracted.length} rows.`
+        : `No new rows found in ${extracted.length} rows (all duplicates or empty).`);
       onImported();
     } catch (err) {
       setStatus(`Import failed: ${err.message}`);
